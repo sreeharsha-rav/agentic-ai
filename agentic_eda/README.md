@@ -14,6 +14,7 @@ agentic_eda/
 ├── README.md                    # This documentation file
 ├── config.py                    # Paths, correlation threshold, env loading (no shared client/model)
 ├── pipeline.py                  # End-to-end orchestrator (run this)
+├── workflow.ipynb               # Step-by-step interactive Jupyter Notebook
 ├── data/                        # Raw dataset directory
 │   └── sales_data.csv           # Raw sales CSV dataset
 ├── data_prep/                   # Step 1 — Cleaning Agent module
@@ -84,6 +85,12 @@ python -m agentic_eda.pipeline
 
 # Or run with a custom CSV dataset
 python -m agentic_eda.pipeline path/to/your_data.csv
+```
+
+### Interactive Jupyter Notebook
+For step-by-step analysis, inspecting reasoning chains, and displaying inline chart outputs:
+```bash
+jupyter lab agentic_eda/workflow.ipynb
 ```
 
 ### Individual Agents

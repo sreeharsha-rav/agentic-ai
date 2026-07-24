@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Data
+
+agentic_eda/data/*
+agentic_eda/data/*.csv
+
+# Outputs
+agentic_eda/outputs/*

@@ -1,26 +1,8 @@
 # Agentic EDA — Sales Data Explorer
 
-An LLM-powered, multi-agent pipeline that takes a raw CSV data and produces a complete exploratory data analysis: cleaned dataset, univariate & multivariate charts, and a synthesized markdown report — fully automated via OpenAI Structured Outputs.
+An LLM-powered, multi-agent pipeline that takes raw CSV data and produces a complete exploratory data analysis: a cleaned dataset, univariate & multivariate charts, and a synthesized markdown report. Fully automated via OpenAI Structured Outputs.
 
-Dataset: [Kaggle - Sales CSV](https://www.kaggle.com/datasets/beekiran/sales-data-analysis)
-
-## How It Works
-
-The pipeline runs four specialised agents in sequence, each grounded in a real profile of the data rather than LLM guesses:
-
-```
-Raw CSV  →  Data Prep  →  Cleaned CSV  →  Univariate ──┐
-                                        →  Multivariate ─┤→  Report Agent  →  Markdown Report
-```
-
-| # | Agent | What it does | Output |
-|---|---|---|---|
-| 1 | **Data Prep** | Profiles raw CSV, LLM reasons about nulls / types / dates, generates & runs a pandas cleaning script. Mandatory: `Year`, `Month`, `Day`, `Hour` derived columns. | `outputs/cleaned/<name>_cleaned.csv` |
-| 2a | **Univariate** | **Multi-turn:** Turn 1 profiles the cleaned CSV and plans one chart per variable (histogram / bar / top-N) or skips it; Turn 2 generates matplotlib code for exactly those. Reasoning carries across turns via `previous_response_id`; execution failures are self-corrected in bounded retries. | `outputs/charts/univariate/*.png` |
-| 2b | **Multivariate** | **Multi-turn:** Turn 1 reasons over a precomputed correlation report and selects pairwise relationships (numeric↔numeric, numeric↔categorical) + a correlation heatmap; Turn 2 generates matplotlib code for exactly those. Same reasoning-continuity and self-correction as Univariate. Runs in parallel with Univariate logically; currently sequential in `pipeline.py`. | `outputs/charts/multivariate/*.png` |
-| 3 | **Report** | **Multimodal synthesis:** serializes every prior stage's context (profile, correlation report, plans, reasoning, summaries) and attaches the chart PNGs as images, so the model reads the charts visually and returns structured narrative (executive summary, per-chart findings, cross-stage insights, consolidated assumptions). Python assembles that into the final markdown — image links + generated-code appendix. | `outputs/reports/<name>_report.md` |
-
-All generated code runs in an **isolated subprocess** (never `exec()`), with timeout enforcement and output-existence checks for safety — see `executors.py`.
+For in-depth details on the pipeline's execution flow and design decisions, refer to the [Architecture Document](./ARCHITECTURE.md).
 
 ## Project Structure
 
@@ -62,79 +44,66 @@ agentic_eda/
     └── reports/                 # Synthesized Markdown reports from Step 3
 ```
 
-## Data
+## Setup Instructions
 
-Place the raw sales CSV under:
-
+### 1. Download Dataset
+Download the [Kaggle - Sales CSV](https://www.kaggle.com/datasets/beekiran/sales-data-analysis) dataset and place the CSV file at:
 ```
 agentic_eda/data/sales_data.csv
 ```
 
-`config.py` resolves this automatically from `BASE_DIR / "data"`.  
-Dataset expected: ~185 k rows, columns include `Order ID`, `Product`, `Quantity Ordered`, `Price Each`, `Order Date`, `Purchase Address`, `Month`, `Sales`, `City`, `Hour`.
-
-## Environment Setup
-
-### 1. Install dependencies
-
-From the **project root** (requires [uv](https://github.com/astral-sh/uv) or pip):
-
+### 2. Install Dependencies
+From the repository root directory, run:
 ```bash
-# uv (recommended)
+# Using uv (recommended)
 uv sync
 uv add openai python-dotenv pandas matplotlib
 
-# or pip
+# Or using pip
 pip install openai python-dotenv pandas matplotlib
 ```
 
-### 2. Configure the API key
-
-Create `agentic_eda/.env`:
-
+### 3. Configure API Key
+Create a `.env` file in the `agentic_eda/` directory:
 ```dotenv
 OPENAI_API_KEY=sk-proj-...your-key-here...
 ```
 
-`config.py` loads this file automatically via `load_dotenv(dotenv_path=BASE_DIR / ".env")`.
+### 4. Configure Models (Optional)
+Each agent defines its own `OPENAI_MODEL` constant in its respective `agent.py` file. Update these values to configure models supporting **Structured Outputs** (e.g. `gpt-4o` / `gpt-4o-mini`). The **report agent** (`agentic_eda/report/agent.py`) requires a vision-capable model to inspect generated charts.
 
-> **Note:** The `.env` file is gitignored. Never commit your API key.
-
-### 3. Model
-
-Each agent defines its own `client = OpenAI(api_key=OPENAI_API_KEY)` and `OPENAI_MODEL` constant locally in its respective `agent.py` file rather than sharing one from `config.py` — this lets each stage be pointed at a different model independently, e.g. for isolated testing. Update the `OPENAI_MODEL` value at the top of the relevant agent file (`agentic_eda/data_prep/agent.py`, `agentic_eda/univariate_analysis/agent.py`, etc.) to any model that supports **Structured Outputs / `responses.parse()`** with reasoning (required for the multi-turn agents). The **report agent additionally needs a vision-capable model**, since it reads the chart images.
+---
 
 ## Running the Pipeline
 
-Run the full end-to-end pipeline from the project root:
-
+### End-to-End Orchestrator
+Execute the complete multi-agent pipeline with:
 ```bash
-# Default — uses agentic_eda/data/sales_data.csv
+# Run with the default sales dataset
 python -m agentic_eda.pipeline
 
-# Custom CSV
+# Or run with a custom CSV dataset
 python -m agentic_eda.pipeline path/to/your_data.csv
 ```
 
-Run an individual agent:
-
+### Individual Agents
+Run any step individually (e.g., for testing):
 ```bash
 python -m agentic_eda.data_prep.agent
 python -m agentic_eda.univariate_analysis.agent
 python -m agentic_eda.multivariate_analysis.agent
 python -m agentic_eda.report.agent
 ```
+All outputs are stored under `agentic_eda/outputs/`.
 
-Outputs are written to `agentic_eda/outputs/` and are self-contained within this module.
+---
 
-## Key Design Decisions
+## Design Decisions (Brief)
 
-- **Structured Outputs** — every agent response is validated against a Pydantic schema, guaranteeing fields like `reasoning_steps`, `code`, and `summary` are always present and correctly typed.
-- **Subprocess isolation** — LLM-generated code is untrusted; running it in a child process with a timeout and output-existence check is the safety boundary.
-- **Profile-first** — agents receive a real `df.info()` + null counts + cardinality + head preview, so the LLM reasons over actual data rather than hallucinated schema.
-- **Fan-out / fan-in** — Univariate and Multivariate are logically independent (both only read the cleaned CSV); they can be parallelised with `asyncio.gather` or a thread pool without changing their APIs.
-- **Multi-turn, not one-shot** — Univariate and Multivariate each split into a SELECTION turn (decide what to plot, grounded in the real profile / correlation numbers, no code) and a CODE-GEN turn (given that plan, write the matplotlib script). This keeps chart selection auditable independently of the generated code and avoids overloading a single prompt with both jobs.
-- **Server-side reasoning continuity** — turns are sent with `store=True`, and each subsequent turn (including fix retries) passes the prior response's `id` as `previous_response_id`, so OpenAI carries the reasoning context forward without the caller replaying history manually.
-- **Self-correcting on execution failure** — if the generated script raises in the subprocess, the traceback is sent back as a new turn chained onto the failed response, prompting the model to diagnose the root cause, scan the rest of the script for the same class of mistake, and return a corrected full script — bounded by `max_fix_attempts` before the error propagates to the caller.
-- **Per-item error isolation in generated code** — each chart (per variable, or per relationship/heatmap) is wrapped in its own `try/except` in the generated script, so one bad column or pair can't abort the whole run.
-- **Report = multimodal synthesis, Python owns layout** — the report agent sends the model both the serialized per-stage context and the actual chart images, but the LLM only returns *narrative* (structured per-section prose + per-chart findings). Python deterministically assembles the markdown, computes report-relative image paths, and embeds the generated-code appendix — so image paths and document structure are never left to the model to guess.
+- **Structured Outputs & Pydantic**: Every agent response is strongly validated against a Pydantic schema for reliable behavior.
+- **Subprocess Isolation**: Generated Python code is executed in isolated child processes with timeout boundaries for safety.
+- **Profile-First Grounding**: Agents are fed real dataset metadata (data profile & correlations) instead of relying on LLM guesses.
+- **Multi-Turn Planning**: Analysis agents split work into separate SELECTION (planning) and CODE-GEN (generation) turns for auditable execution.
+- **Server-Side Context Continuity**: Chained calls use OpenAI's `store=True` and `previous_response_id` to carry forward conversation context.
+- **Self-Correction & Error Isolation**: Code execution tracebacks are fed back to agents for bounded self-healing. Each chart generation block is wrapped in a `try/except` to ensure one error does not fail the entire run.
+- **Deterministic Presentation & Multimodal Synthesis**: Presentation layout and Markdown structure are handled deterministically by Python. The report agent uses visual readings of the generated charts to write narrative insights.

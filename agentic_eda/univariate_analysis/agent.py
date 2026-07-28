@@ -18,7 +18,7 @@ Reasoning continuity relies on the shared `conversation.run_structured_turn`
 helper (store=False + include=["reasoning.encrypted_content"]); see its docstring.
 """
 from pathlib import Path
-from typing import Literal
+from typing import Any, Callable, Literal, Optional
 from pydantic import BaseModel, Field
 from openai import OpenAI
 
@@ -29,6 +29,11 @@ from .prompts import (
 )
 from agentic_eda.config import OPENAI_API_KEY, UNIVARIATE_CHARTS_DIR
 from agentic_eda.utils import profile_dataset, execute_chart_generation_code
+
+# Optional progress sink: `on_event(name, payload)`. Defaults to a no-op so the
+# CLI and notebook paths behave exactly as before; the web server passes a hook
+# that forwards each event to its SSE stream.
+ProgressHook = Optional[Callable[[str, dict[str, Any]], None]]
 
 
 # ---- OPENAI client ----
@@ -164,6 +169,7 @@ def run_univariate_analysis(
     model: str = OPENAI_MODEL,
     n_preview: int = 10,
     max_fix_attempts: int = 2,
+    on_event: ProgressHook = None,
 ) -> tuple[UnivariateAnalysisResponse, list[Path]]:
     """
     End-to-end univariate step.
@@ -172,7 +178,12 @@ def run_univariate_analysis(
     code; the code is executed and, on failure, re-generated from the error
     within the same conversation (up to `max_fix_attempts` times). Returns the
     combined structured response plus the chart PNGs created.
+
+    `on_event` optionally receives progress events; see `ProgressHook`.
     """
+    emit = on_event or (lambda name, payload: None)
+
+    emit("progress", {"message": "profiling cleaned dataset"})
     profile = profile_dataset(cleaned_csv_path, n_preview=n_preview)
 
     # ---- Turn 1: variable selection -------------------------------------- #
@@ -187,6 +198,7 @@ def run_univariate_analysis(
     </dataset_profile>
     """
 
+    emit("progress", {"message": "selecting a chart per variable", "turn": 1, "of": 2})
     selection_response = client.responses.parse(
         model=model,
         store=True,
@@ -203,6 +215,17 @@ def run_univariate_analysis(
 
     selection_output = selection_response.output_parsed
 
+    emit("turn_completed", {
+        "turn": "selection",
+        "data": selection_output.model_dump(mode="json"),
+    })
+    for index, step in enumerate(selection_output.reasoning_steps):
+        emit("reasoning", {"index": index, **step.model_dump(mode="json")})
+    emit("plan", {
+        "kind": "variable",
+        "items": [plan.model_dump(mode="json") for plan in selection_output.variable_plans],
+    })
+
     # ---- Turn 2: code generation ----------------------------------------- #
     codegen_input = f"""
     "Now generate ONE matplotlib script that renders and saves exactly "
@@ -214,6 +237,7 @@ def run_univariate_analysis(
     </selected_variables>
     """
 
+    emit("progress", {"message": "generating matplotlib code", "turn": 2, "of": 2})
     code_response = client.responses.parse(
         model=model,
         store=True,
@@ -223,19 +247,28 @@ def run_univariate_analysis(
         reasoning={"context": "all_turns", "effort": "medium"},
         text_format=UnivariateCodeGenResponse,
     )
-    
+
     if code_response.output_parsed is None:
         raise RuntimeError(
             f"Structured turn did not produce a parsed result: {code_response.output_text}"
         )
-    
+
     codegen_output = code_response.output_parsed
+
+    emit("turn_completed", {
+        "turn": "codegen",
+        "data": codegen_output.model_dump(mode="json", exclude={"code"}),
+    })
+    for index, step in enumerate(codegen_output.reasoning_steps):
+        emit("reasoning", {"index": index, **step.model_dump(mode="json")})
+    emit("code", {"language": "python", "code": codegen_output.code})
 
     # ---- Execute, self-correcting from errors within the conversation ---- #
     chart_paths: list[Path] = []
     attempt = 0
     while True:
         try:
+            emit("progress", {"message": "executing generated code in a subprocess"})
             chart_paths = execute_chart_generation_code(
                 generated_code=codegen_output.code,
                 dataset_path=cleaned_csv_path,
@@ -245,11 +278,22 @@ def run_univariate_analysis(
         except RuntimeError as exc:
             attempt += 1
             if attempt > max_fix_attempts:
+                emit("retry_exhausted", {
+                    "attempts": attempt - 1,
+                    "max_attempts": max_fix_attempts,
+                    "error": str(exc)[:4000],
+                })
                 raise
-            print(
-                f"[univariate] generated code failed "
-                f"(attempt {attempt}/{max_fix_attempts}); asking the model to fix it."
-            )
+            if on_event is None:
+                print(
+                    f"[univariate] generated code failed "
+                    f"(attempt {attempt}/{max_fix_attempts}); asking the model to fix it."
+                )
+            emit("retry", {
+                "attempt": attempt,
+                "max_attempts": max_fix_attempts,
+                "error": str(exc)[:4000],
+            })
             error_fix_input = UNIVARIATE_FIX_REQUEST.format(error=str(exc))
 
             code_response = client.responses.parse(
@@ -266,8 +310,17 @@ def run_univariate_analysis(
                 raise RuntimeError(
                     f"Structured turn did not produce a parsed result: {code_response.output_text}"
                 )
-            
+
             codegen_output = code_response.output_parsed
+            emit("code", {
+                "language": "python",
+                "code": codegen_output.code,
+                "revision": attempt,
+            })
+
+    for chart_path in chart_paths:
+        emit("artifact", {"kind": "chart", "path": str(chart_path)})
+    emit("summary", {"summary": codegen_output.summary})
 
     combined = UnivariateAnalysisResponse(
         reasoning_steps=[*selection_output.reasoning_steps, *codegen_output.reasoning_steps],

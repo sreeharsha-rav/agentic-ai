@@ -61,3 +61,98 @@ flowchart LR
 - **Current Sequential Pipeline**: In `pipeline.py`, the stages run sequentially (`Data Prep` -> `Univariate` -> `Multivariate` -> `Report`). This makes logs straightforward to follow and simplifies tracing OpenAI API response states and stdout/stderr output.
 - **Parallelization Capabilities**: Because both Univariate and Multivariate analysis are I/O-bound (each calls its own target OpenAI model and executes generated python code in a child subprocess) and share no state, they are fully concurrently runnable. The pipeline can be parallelized (e.g., utilizing `asyncio.gather` or a thread pool in `pipeline.py`) to reduce the total processing time by letting both analysis stages execute simultaneously.
 - **Report Synthesis Join-Point**: The Report stage serves as a synchronization join-point. It cannot begin execution until both Univariate and Multivariate analysis have completed and generated their respective charts and structured analysis outputs.
+
+---
+
+## Second Consumer: the Streaming Web Server
+
+`pipeline.py` is no longer the only orchestrator. `server/services/orchestrator.py`
+drives the same four agents for the web app. They are deliberate siblings rather
+than one shared function: the CLI wants `print` output and the flat `outputs/`
+paths, while the server wants structured events and per-run isolation. Forcing one
+function to serve both would have compromised each. What *is* shared is everything
+that matters — the same four agent entrypoints, the same executors, the same
+profiler, the same `config.py` paths.
+
+```mermaid
+flowchart TD
+    subgraph CLIENT ["Browser — React + TypeScript"]
+        UP["Upload CSV"] --> TRIG["Manual trigger"]
+        SSE["EventSource<br>/api/runs/{id}/events"] --> RED["runReducer<br>seq-based dedup"]
+        RED --> UI["Stage timeline · reasoning ·<br>plan tables · charts · report"]
+    end
+
+    TRIG -->|"POST /api/runs → 202"| RM
+    subgraph SERVER ["FastAPI — :8000"]
+        RM["RunManager<br>ThreadPoolExecutor(max 2)"]
+        ORCH["Orchestrator<br>4 stages, blocking"]
+        HUB["EventHub<br>history + subscribers"]
+        LOG[("events.jsonl")]
+        RM --> ORCH
+        ORCH -->|"emit() via<br>call_soon_threadsafe"| HUB
+        HUB --> LOG
+        HUB --> SSE
+    end
+
+    ORCH --> AGENTS["The four agents<br>(unchanged, + on_event hook)"]
+    AGENTS --> ART[("outputs/runs/{run_id}/<br>charts · cleaned · reports")]
+    ART -->|"/artifacts/..."| UI
+```
+
+### The three problems the server had to solve
+
+**1. Everything is blocking.** No agent is async: `client.responses.parse`,
+`subprocess.run`, and multi-second `pd.read_csv` calls would all freeze the event
+loop for minutes. So a run is submitted to a `ThreadPoolExecutor`, and the worker
+thread marshals events back onto the loop with `loop.call_soon_threadsafe`. All
+mutation of the event history and subscriber queues therefore stays
+single-threaded, and no locking is needed.
+
+A useful consequence falls out of putting the work in the executor rather than in a
+request handler: **a client disconnect cannot cancel a run**. Given that a run costs
+4–12 minutes and real API spend, surviving a closed tab is the correct behaviour.
+
+**2. Stages are silent for minutes.** Wrapping only the four public functions would
+yield about ten events across a twelve-minute run — long enough that the UI would
+read as hung. Each agent entrypoint therefore takes an optional
+`on_event(name, payload)` hook, defaulting to a no-op so the CLI and notebook are
+untouched. With it, the stream carries sub-stage detail: profiling, turn 1 of 2,
+turn 2 of 2, subprocess execution, and each self-correction retry. The agents emit
+short `(name, payload)` pairs and know nothing about the wire envelope; the
+orchestrator stamps the stage and maps names to event types.
+
+**3. Concurrent runs corrupted each other.** `execute_chart_generation_code`
+identifies the PNGs it produced by globbing `charts_dir` and filtering on mtime.
+Two runs sharing that directory each pick up the other's charts. Because all four
+entrypoints already accepted `charts_dir` / `output_csv_path` / `output_path`, the
+fix needed no agent change: the server allocates `outputs/runs/{run_id}/` per run
+and passes those paths explicitly.
+
+### Resumability
+
+Every event carries a monotonic `seq`, emitted as the SSE frame's `id`. That single
+decision buys three behaviours with no bespoke protocol work:
+
+- **Reconnection** — browser `EventSource` retries automatically and resends
+  `Last-Event-ID`; the server replays only events after it.
+- **Idempotence** — the client discards any `seq` it has already applied, so
+  replayed history and a second browser tab are both harmless.
+- **Durability** — the same events are appended to `events.jsonl`, which powers
+  post-restart inspection and a replay mode that re-streams a finished run with
+  zero OpenAI calls.
+
+Heartbeats every 10s deliberately reuse the last real `seq`, so a long quiet stage
+never advances the client's dedup cursor.
+
+### Honest limits
+
+- **Cancellation is cooperative.** A blocking `responses.parse` cannot be
+  interrupted, so the cancel flag is only checked between stages; the executing
+  stage finishes.
+- **Run state is in memory**, mirrored to `run.json`. After a restart, completed
+  runs stay inspectable and replayable, but runs that were in flight are reported
+  as failed rather than silently left "running".
+- **The report's markdown keeps relative image links** (`../charts/univariate/*.png`)
+  so the file stays correct on disk. The API returns a `base_url` alongside the
+  markdown and the client resolves each `src` against it, rather than the server
+  rewriting the document.

@@ -1,0 +1,67 @@
+/* Design tokens. Dark-first — this is a monitoring surface people leave open for
+   ten minutes — with a light scheme honoured via prefers-color-scheme. */
+
+:root {
+  --bg: #0b0f16;
+  --bg-raised: #121824;
+  --bg-inset: #0d121b;
+  --bg-hover: #1a2231;
+  --border: #222c3d;
+  --border-strong: #31405a;
+
+  --text: #e6ecf5;
+  --text-muted: #93a1b8;
+  --text-faint: #64748b;
+
+  --accent: #4f9cf9;
+  --accent-soft: rgba(79, 156, 249, 0.14);
+  --accent-border: rgba(79, 156, 249, 0.4);
+
+  --success: #3fb950;
+  --success-soft: rgba(63, 185, 80, 0.13);
+  --warn: #d29922;
+  --warn-soft: rgba(210, 153, 34, 0.14);
+  --warn-border: rgba(210, 153, 34, 0.42);
+  --danger: #f85149;
+  --danger-soft: rgba(248, 81, 73, 0.13);
+  --danger-border: rgba(248, 81, 73, 0.4);
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.22);
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --max-width: 1180px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f7fa;
+    --bg-raised: #ffffff;
+    --bg-inset: #f0f3f7;
+    --bg-hover: #e9eef5;
+    --border: #d8dee9;
+    --border-strong: #b9c3d3;
+
+    --text: #16202e;
+    --text-muted: #55637a;
+    --text-faint: #7c8798;
+
+    --accent: #0b62d6;
+    --accent-soft: rgba(11, 98, 214, 0.09);
+    --accent-border: rgba(11, 98, 214, 0.32);
+
+    --success: #1a7f37;
+    --success-soft: rgba(26, 127, 55, 0.1);
+    --warn: #9a6700;
+    --warn-soft: rgba(154, 103, 0, 0.11);
+    --warn-border: rgba(154, 103, 0, 0.34);
+    --danger: #cf222e;
+    --danger-soft: rgba(207, 34, 46, 0.09);
+    --danger-border: rgba(207, 34, 46, 0.3);
+
+    --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 8px 24px rgba(16, 24, 40, 0.06);
+  }
+}

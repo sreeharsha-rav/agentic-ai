@@ -224,3 +224,15 @@ agentic_eda/data/*.csv
 
 # Outputs
 agentic_eda/outputs/*
+
+# Frontend (agentic_eda/web)
+# NOTE: the Python "Distribution / packaging" section above already ignores
+# dist/, build/ and lib/ globally. Do not name a frontend source folder `lib`.
+node_modules/
+agentic_eda/web/dist/
+agentic_eda/web/.vite/
+agentic_eda/web/*.tsbuildinfo
+agentic_eda/web/tsconfig.*.tsbuildinfo
+.pnpm-store/
+npm-debug.log*
+pnpm-debug.log*

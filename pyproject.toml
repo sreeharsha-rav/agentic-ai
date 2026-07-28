@@ -5,10 +5,21 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "fastapi>=0.139.0",
     "google-adk>=2.4.0",
     "ipykernel>=7.3.0",
     "matplotlib>=3.11.1",
     "openai>=2.48.0",
     "pandas>=3.0.5",
     "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.32",
+    "uvicorn[standard]>=0.51.0",
 ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+

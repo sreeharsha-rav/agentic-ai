@@ -24,7 +24,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 
 from pydantic import BaseModel, Field
 from openai import OpenAI
@@ -32,6 +32,11 @@ from openai import OpenAI
 from .prompts import REPORT_INSTRUCTIONS
 from agentic_eda.config import OPENAI_API_KEY, REPORTS_DIR
 from agentic_eda.utils import profile_dataset, correlation_profile
+
+# Optional progress sink: `on_event(name, payload)`. Defaults to a no-op so the
+# CLI and notebook paths behave exactly as before; the web server passes a hook
+# that forwards each event to its SSE stream.
+ProgressHook = Optional[Callable[[str, dict[str, Any]], None]]
 
 if TYPE_CHECKING:  # keep the report module importable without pulling the agents in
     from agentic_eda.data_prep.agent import DataPrepResponse
@@ -251,6 +256,7 @@ def _build_input_parts(context: EdaContext) -> list[dict]:
 def generate_report_narrative(
     context: EdaContext,
     model: str = OPENAI_MODEL,
+    on_event: ProgressHook = None,
 ) -> EdaReportResponse:
     """
     Produce the structured report narrative from the aggregated context.
@@ -258,14 +264,26 @@ def generate_report_narrative(
     Single-turn synthesis (no code executes, so no self-correction loop). When no
     analysis stage ran, short-circuits to an empty narrative WITHOUT an API call so
     the offline skeleton smoke test needs neither key nor network.
+
+    `on_event` optionally receives progress events; see `ProgressHook`.
     """
+    emit = on_event or (lambda name, payload: None)
+
     if not (context.data_prep or context.univariate or context.multivariate):
+        emit("progress", {"message": "no upstream stages present; emitting skeleton report"})
         return _empty_narrative()
 
+    chart_count = len(context.all_charts)
+    emit("progress", {
+        "message": f"re-profiling cleaned data and encoding {chart_count} charts for vision input"
+    })
+    input_parts = _build_input_parts(context)
+
+    emit("progress", {"message": f"synthesizing narrative from {chart_count} charts (multimodal)"})
     response = client.responses.parse(
         model=model,
         instructions=REPORT_INSTRUCTIONS,
-        input=_build_input_parts(context),
+        input=input_parts,
         reasoning={"context": "current_turn", "effort": "high"},
         text_format=EdaReportResponse,
     )
@@ -273,7 +291,17 @@ def generate_report_narrative(
         raise RuntimeError(
             f"Report synthesis did not produce a parsed result: {response.output_text}"
         )
-    return response.output_parsed
+
+    parsed = response.output_parsed
+
+    emit("turn_completed", {
+        "turn": "narrative",
+        "data": parsed.model_dump(mode="json"),
+    })
+    for index, step in enumerate(parsed.reasoning_steps):
+        emit("reasoning", {"index": index, **step.model_dump(mode="json")})
+
+    return parsed
 
 
 # --------------------------------------------------------------------------- #
@@ -412,9 +440,17 @@ _SECTION_RENDERERS: list[Callable[[EdaContext, EdaReportResponse, Path], str]] =
 # Assembly + persistence — CONCRETE.
 # --------------------------------------------------------------------------- #
 
-def assemble_report(context: EdaContext, report_dir: Path) -> str:
+def assemble_report(
+    context: EdaContext,
+    report_dir: Path,
+    on_event: ProgressHook = None,
+) -> str:
     """Synthesize the narrative once, then walk the section renderers into markdown."""
-    narrative = generate_report_narrative(context)
+    emit = on_event or (lambda name, payload: None)
+
+    narrative = generate_report_narrative(context, on_event=on_event)
+
+    emit("progress", {"message": "assembling markdown sections"})
     sections = [render(context, narrative, report_dir) for render in _SECTION_RENDERERS]
     return "\n\n".join(sections).rstrip() + "\n"
 
@@ -430,18 +466,27 @@ def write_report(markdown: str, output_path: str | Path) -> Path:
 def run_report(
     context: EdaContext,
     output_path: str | Path | None = None,
+    on_event: ProgressHook = None,
 ) -> Path:
     """
     End-to-end report step: assemble the markdown from context and write it.
 
-    Returns the path to the written report.
+    Returns the path to the written report. `on_event` optionally receives
+    progress events; see `ProgressHook`.
     """
     if output_path is None:
         output_path = REPORTS_DIR / f"{context.dataset_name}_eda_report.md"
     output_path = Path(output_path)
 
-    markdown = assemble_report(context, report_dir=output_path.parent)
-    return write_report(markdown, output_path)
+    emit = on_event or (lambda name, payload: None)
+
+    markdown = assemble_report(context, report_dir=output_path.parent, on_event=on_event)
+    report_path = write_report(markdown, output_path)
+
+    emit("artifact", {"kind": "report", "path": str(report_path)})
+    emit("summary", {"summary": f"Report assembled with {len(markdown):,} characters of markdown."})
+
+    return report_path
 
 
 if __name__ == "__main__":

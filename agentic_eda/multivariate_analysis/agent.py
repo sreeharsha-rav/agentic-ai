@@ -27,7 +27,7 @@ interactions are out of scope for this version — see MULTIVARIATE_*_INSTRUCTIO
 in prompts.py — and should be added as a follow-up rather than folded in here.
 """
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Callable, Literal, Optional
 from pydantic import BaseModel, Field
 from openai import OpenAI
 
@@ -38,6 +38,11 @@ from .prompts import (
 )
 from agentic_eda.config import OPENAI_API_KEY, MULTIVARIATE_CHARTS_DIR, CORRELATION_THRESHOLD
 from agentic_eda.utils import profile_dataset, correlation_profile, execute_chart_generation_code
+
+# Optional progress sink: `on_event(name, payload)`. Defaults to a no-op so the
+# CLI and notebook paths behave exactly as before; the web server passes a hook
+# that forwards each event to its SSE stream.
+ProgressHook = Optional[Callable[[str, dict[str, Any]], None]]
 
 
 # ---- OPENAI client ----
@@ -200,6 +205,7 @@ def run_multivariate_analysis(
     threshold: float = CORRELATION_THRESHOLD,
     n_preview: int = 10,
     max_fix_attempts: int = 2,
+    on_event: ProgressHook = None,
 ) -> tuple[MultivariateAnalysisResponse, list[Path]]:
     """
     End-to-end multivariate step.
@@ -208,9 +214,17 @@ def run_multivariate_analysis(
     generates the chart code; the code is executed and, on failure, re-generated
     from the error within the same conversation (up to `max_fix_attempts` times).
     Returns the combined structured response plus the chart PNGs created.
+
+    `on_event` optionally receives progress events; see `ProgressHook`.
     """
+    emit = on_event or (lambda name, payload: None)
+
+    emit("progress", {"message": "profiling cleaned dataset"})
     profile = profile_dataset(cleaned_csv_path, n_preview=n_preview)
+
+    emit("progress", {"message": f"computing correlation matrix (threshold |r| >= {threshold})"})
     corr_report = correlation_profile(cleaned_csv_path, threshold=threshold)
+    emit("profile", {"kind": "correlation", "text": corr_report})
 
     # ---- Turn 1: relationship selection ---------------------------------- #
     selection_input = f"""
@@ -229,6 +243,7 @@ def run_multivariate_analysis(
     </correlation_report>
     """
 
+    emit("progress", {"message": "selecting relationships worth plotting", "turn": 1, "of": 2})
     selection_response = client.responses.parse(
         model=model,
         store=True,
@@ -245,6 +260,17 @@ def run_multivariate_analysis(
 
     selection_output = selection_response.output_parsed
 
+    emit("turn_completed", {
+        "turn": "selection",
+        "data": selection_output.model_dump(mode="json"),
+    })
+    for index, step in enumerate(selection_output.reasoning_steps):
+        emit("reasoning", {"index": index, **step.model_dump(mode="json")})
+    emit("plan", {
+        "kind": "relationship",
+        "items": [plan.model_dump(mode="json") for plan in selection_output.relationship_plans],
+    })
+
     # ---- Turn 2: code generation ----------------------------------------- #
     codegen_input = f"""
     Now generate ONE matplotlib script that renders and saves exactly the
@@ -257,6 +283,7 @@ def run_multivariate_analysis(
     </relationship_plans>
     """
 
+    emit("progress", {"message": "generating matplotlib code", "turn": 2, "of": 2})
     code_response = client.responses.parse(
         model=model,
         store=True,
@@ -274,11 +301,20 @@ def run_multivariate_analysis(
 
     codegen_output = code_response.output_parsed
 
+    emit("turn_completed", {
+        "turn": "codegen",
+        "data": codegen_output.model_dump(mode="json", exclude={"code"}),
+    })
+    for index, step in enumerate(codegen_output.reasoning_steps):
+        emit("reasoning", {"index": index, **step.model_dump(mode="json")})
+    emit("code", {"language": "python", "code": codegen_output.code})
+
     # ---- Execute, self-correcting from errors within the conversation ---- #
     chart_paths: list[Path] = []
     attempt = 0
     while True:
         try:
+            emit("progress", {"message": "executing generated code in a subprocess"})
             chart_paths = execute_chart_generation_code(
                 generated_code=codegen_output.code,
                 dataset_path=cleaned_csv_path,
@@ -288,11 +324,22 @@ def run_multivariate_analysis(
         except RuntimeError as exc:
             attempt += 1
             if attempt > max_fix_attempts:
+                emit("retry_exhausted", {
+                    "attempts": attempt - 1,
+                    "max_attempts": max_fix_attempts,
+                    "error": str(exc)[:4000],
+                })
                 raise
-            print(
-                f"[multivariate] generated code failed "
-                f"(attempt {attempt}/{max_fix_attempts}); asking the model to fix it."
-            )
+            if on_event is None:
+                print(
+                    f"[multivariate] generated code failed "
+                    f"(attempt {attempt}/{max_fix_attempts}); asking the model to fix it."
+                )
+            emit("retry", {
+                "attempt": attempt,
+                "max_attempts": max_fix_attempts,
+                "error": str(exc)[:4000],
+            })
             error_fix_input = MULTIVARIATE_FIX_REQUEST.format(error=str(exc))
 
             code_response = client.responses.parse(
@@ -311,6 +358,15 @@ def run_multivariate_analysis(
                 )
 
             codegen_output = code_response.output_parsed
+            emit("code", {
+                "language": "python",
+                "code": codegen_output.code,
+                "revision": attempt,
+            })
+
+    for chart_path in chart_paths:
+        emit("artifact", {"kind": "chart", "path": str(chart_path)})
+    emit("summary", {"summary": codegen_output.summary})
 
     combined = MultivariateAnalysisResponse(
         reasoning_steps=[*selection_output.reasoning_steps, *codegen_output.reasoning_steps],

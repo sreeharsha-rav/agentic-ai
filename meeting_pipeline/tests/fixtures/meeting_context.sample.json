@@ -1,0 +1,44 @@
+[
+  {
+    "topic_id": "topic_000",
+    "start_sec": 10.0,
+    "end_sec": 60.0,
+    "start_time": "00:10",
+    "end_time": "01:00",
+    "duration_sec": 50.0,
+    "speakers": ["Alice"],
+    "segment_ids": ["seg_000", "seg_001"],
+    "segment_count": 2,
+    "transcript_aggregated": "Alice: Let's look at the architecture. We use Redis as a cache layer in front of the database, and the API gateway routes requests through it.",
+    "visual_hierarchy": {
+      "titles": ["System Architecture"],
+      "content": ["Redis cache layer", "API gateway routes requests"],
+      "details": []
+    },
+    "visual_texts": ["System Architecture", "Redis cache layer", "API gateway routes requests"],
+    "keywords": ["redis cache", "api gateway", "database"],
+    "frames": [],
+    "frame_count": 0,
+    "primary_frame": null,
+    "searchable_query": "Alice: Let's look at the architecture. We use Redis as a cache layer in front of the database, and the API gateway routes requests through it.\n[VISUAL_TITLES]: System Architecture\n[VISUAL_CONTENT]: Redis cache layer | API gateway routes requests\n[KEYWORDS]: redis cache, api gateway, database"
+  },
+  {
+    "topic_id": "topic_001",
+    "start_sec": 300.0,
+    "end_sec": 330.0,
+    "start_time": "05:00",
+    "end_time": "05:30",
+    "duration_sec": 30.0,
+    "speakers": ["Bob"],
+    "segment_ids": ["seg_010"],
+    "segment_count": 1,
+    "transcript_aggregated": "Bob: Before we wrap up, does anyone have preferences for the team lunch order or the holiday schedule next month?",
+    "visual_hierarchy": {"titles": [], "content": [], "details": []},
+    "visual_texts": [],
+    "keywords": ["lunch order", "holiday schedule"],
+    "frames": [],
+    "frame_count": 0,
+    "primary_frame": null,
+    "searchable_query": "Bob: Before we wrap up, does anyone have preferences for the team lunch order or the holiday schedule next month?\n[KEYWORDS]: lunch order, holiday schedule"
+  }
+]

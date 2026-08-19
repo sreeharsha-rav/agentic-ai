@@ -1,0 +1,29 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:02.000
+<v Alice>Let's look at the architecture.</v>
+
+2
+00:00:02.500 --> 00:00:05.000
+<v Alice>The API talks to Redis here.</v>
+
+3
+00:00:05.200 --> 00:00:07.000
+<v Bob>Can you go back to the previous slide?</v>
+
+4
+00:00:47.000 --> 00:00:52.000
+<v Alice>Sorry, this is where we cache the responses.</v>
+
+5
+00:00:52.500 --> 00:00:57.000
+No voice tag on this caption at all.
+
+6
+00:00:57.200 --> 00:01:27.500
+<v Bob>I'll keep talking for a while now to cross the maximum chunk duration threshold so this segment eventually gets split into more than one chunk even though there is no gap and the speaker never changes throughout this whole monologue.</v>
+
+7
+00:01:28.000 --> 00:01:30.000
+<v Bob>And that's the end of it.</v>

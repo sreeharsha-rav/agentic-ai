@@ -1,0 +1,23 @@
+# Hand-maintained flat mirror of pyproject.toml's [project.dependencies] for
+# pip-only users (`pip install -r requirements.txt`). pyproject.toml is the
+# authoritative source; tests/test_requirements_sync.py guards the two files
+# from drifting apart.
+#
+# External, non-pip requirement: the `ffmpeg` CLI must be on PATH.
+#
+# No OCR backend is a hard requirement (falls back to transcript-only context),
+# but one is recommended. Uncomment the line for your platform, or install the
+# `ocr` / `easyocr` / `paddleocr` / `tesseract` extra instead:
+#   pip install -r requirements.txt "meeting-pipeline[ocr]"
+# rapidocr-onnxruntime>=1.3.0   # recommended default: fastest, Windows/Linux-friendly
+
+faster-whisper>=1.0.0
+opencv-python>=4.8.0
+numpy>=1.24
+webvtt-py>=0.4.6
+sentence-transformers>=2.2.2
+yake>=0.4.8
+pymupdf>=1.23.0
+python-docx>=1.1.0
+python-pptx>=0.6.23
+pillow>=10.0.0

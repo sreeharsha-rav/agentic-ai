@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.installed.cfg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test / coverage / type-checking caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Model caches (faster-whisper / sentence-transformers download here if not
+# redirected via HF_HOME / XDG_CACHE_HOME)
+.cache/
+
+# Pipeline run outputs -- generated artifacts, never committed
+output/
+outputs/
+*.vtt
+video/hybrid/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Env files that may hold local overrides / secrets
+.env
+.env.*

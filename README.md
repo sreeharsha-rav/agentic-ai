@@ -55,3 +55,7 @@ uv run uvicorn agentic_eda.server.main:app --reload         # web app (+ pnpm de
 
 The web app streams every agent's reasoning, generated code, charts and retries live
 over Server-Sent Events. See [agentic_eda/README.md](./agentic_eda/README.md#web-application).
+
+### [Meeting Notes Summarizer](./meeting_pipeline)
+
+This is an agent based meeting notes summarization framework that helps to summarize the meeting notes.
